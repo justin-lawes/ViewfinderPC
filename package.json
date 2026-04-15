@@ -1,0 +1,48 @@
+{
+  "name": "viewfinder",
+  "version": "1.0.0",
+  "description": "Pro video player for Mac and Windows",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:all": "electron-builder --mac --win"
+  },
+  "build": {
+    "appId": "com.viewfinder.app",
+    "productName": "Viewfinder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "player.js",
+      "icon.*"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": ["dmg", "zip"],
+      "darkModeSupport": true
+    },
+    "win": {
+      "icon": "icon.ico",
+      "target": ["nsis", "portable"]
+    },
+    "fileAssociations": [
+      {
+        "ext": ["mp4", "mov", "mkv", "avi", "webm", "m4v", "ogv"],
+        "name": "Video File",
+        "role": "Viewer"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

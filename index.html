@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Viewfinder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- macOS title bar drag region (Electron only) -->
+    <div id="titlebar" class="titlebar"></div>
+
+    <!-- Windows title bar (Electron on Windows only) -->
+    <div id="win-titlebar" class="win-titlebar">
+      <div class="win-titlebar-drag"></div>
+      <div class="win-titlebar-title">Viewfinder</div>
+      <div class="win-titlebar-controls">
+        <button class="win-btn win-minimize" id="win-minimize" title="Minimize">
+          <svg width="10" height="1" viewBox="0 0 10 1"><rect width="10" height="1" fill="currentColor"/></svg>
+        </button>
+        <button class="win-btn win-maximize" id="win-maximize" title="Maximize">
+          <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>
+        </button>
+        <button class="win-btn win-close" id="win-close" title="Close">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Drop Zone Overlay -->
+    <div id="drop-overlay" class="drop-overlay hidden">
+      <div class="drop-message">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <p>Drop video file to open</p>
+      </div>
+    </div>
+
+    <!-- Welcome Screen -->
+    <div id="welcome" class="welcome">
+      <div class="welcome-content">
+        <div class="welcome-actions">
+          <button id="open-file-btn" class="open-btn">Open File</button>
+          <p class="hint">or drag & drop a video file</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Player -->
+    <div id="player" class="player hidden">
+      <!-- Video Container -->
+      <div id="video-container" class="video-container">
+        <video id="video" preload="metadata"></video>
+        <!-- Color Picker Overlay -->
+        <div id="color-picker-overlay" class="color-picker-overlay hidden">
+          <canvas id="color-magnifier" class="color-magnifier"></canvas>
+          <div id="color-picker-info" class="color-picker-info">
+            <div id="color-swatch" class="color-swatch"></div>
+            <div id="color-values" class="color-values"></div>
+          </div>
+          <div id="color-crosshair" class="color-crosshair"></div>
+        </div>
+
+        <!-- Annotation Canvas -->
+        <canvas id="annotation-canvas" class="annotation-canvas hidden"></canvas>
+
+        <!-- Inline text annotation input -->
+        <div id="ann-text-overlay" class="ann-text-overlay hidden">
+          <input id="ann-text-input" type="text" class="ann-text-input" placeholder="Type annotation…" autocomplete="off">
+        </div>
+
+        <!-- Annotation Toolbar -->
+        <div id="annotation-toolbar" class="annotation-toolbar hidden">
+          <button class="ann-tool active" data-tool="freehand" title="Freehand (1)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          </button>
+          <button class="ann-tool" data-tool="rect" title="Rectangle (2)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+          </button>
+          <button class="ann-tool" data-tool="circle" title="Circle (3)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          </button>
+          <button class="ann-tool" data-tool="arrow" title="Arrow (4)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="12 5 19 5 19 12"/></svg>
+          </button>
+          <button class="ann-tool" data-tool="text" title="Text (5)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9.5" y1="20" x2="14.5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          </button>
+          <div class="ann-separator"></div>
+          <input type="color" id="ann-color" value="#FF3B30" class="ann-color-input" title="Color">
+          <select id="ann-line-width" class="ann-select" title="Line Width">
+            <option value="2">Thin</option>
+            <option value="4" selected>Medium</option>
+            <option value="8">Thick</option>
+          </select>
+          <div class="ann-separator"></div>
+          <button id="ann-undo" class="ann-tool" title="Undo (Cmd+Z)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </button>
+          <button id="ann-clear" class="ann-tool" title="Clear">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+          <div class="ann-separator"></div>
+          <button id="ann-save" class="ann-tool ann-save-btn">Save</button>
+          <button id="ann-cancel" class="ann-tool">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Comment Input (floating, used when panel is closed) -->
+      <div id="comment-input-overlay" class="comment-input-overlay hidden">
+        <div class="comment-input-box">
+          <div id="comment-input-tc" class="comment-input-tc"></div>
+          <input id="comment-input" type="text" placeholder="Add comment..." autocomplete="off">
+          <button id="comment-save-btn" class="comment-save-btn">Save</button>
+          <button id="comment-cancel-btn" class="comment-cancel-btn">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Bottom Controls -->
+      <div id="controls" class="controls">
+        <!-- Barcode Timeline -->
+        <div id="timeline-container" class="timeline-container">
+          <canvas id="barcode-timeline" class="barcode-timeline"></canvas>
+          <div id="progress-fill" class="progress-fill"></div>
+          <div id="comment-markers" class="comment-markers"></div>
+          <div id="playhead" class="playhead"></div>
+          <div id="timeline-hover" class="timeline-hover hidden">
+            <div id="hover-time" class="hover-time"></div>
+          </div>
+        </div>
+
+        <!-- Control Bar -->
+        <div class="control-bar">
+          <div class="controls-left">
+            <button id="play-btn" class="ctrl-btn" title="Play/Pause (Space)">
+              <svg id="play-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5,3 19,12 5,21"/>
+              </svg>
+              <svg id="pause-icon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" class="hidden">
+                <rect x="5" y="3" width="4" height="18"/>
+                <rect x="15" y="3" width="4" height="18"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="timecode-center">
+            <div id="timecode" class="timecode" title="Timecode">00:00:00:00</div>
+            <div id="frame-count" class="frame-count" title="Frame Number">F0</div>
+          </div>
+
+          <div class="controls-right">
+            <button id="screenshot-btn" class="ctrl-btn" title="Screenshot to clipboard (S) / Desktop (Alt+S)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+            </button>
+            <button id="comments-btn" class="ctrl-btn" title="Comments (;)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
+            <button id="annotate-btn" class="ctrl-btn" title="Annotate (D)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+              </svg>
+            </button>
+            <button id="loop-btn" class="ctrl-btn" title="Loop (O)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+              </svg>
+            </button>
+            <div class="volume-group">
+              <button id="volume-btn" class="ctrl-btn" title="Mute (M)">
+                <svg id="vol-on" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19" fill="currentColor"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                </svg>
+                <svg id="vol-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="hidden">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19" fill="currentColor"/>
+                  <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+                </svg>
+              </button>
+              <input id="volume-slider" type="range" min="0" max="1" step="0.01" value="1" class="volume-slider">
+            </div>
+            <button id="speed-btn" class="ctrl-btn speed-btn" title="Playback Speed">1x</button>
+            <button id="info-btn" class="ctrl-btn" title="File Info (I)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </button>
+            <button id="timeline-toggle-btn" class="ctrl-btn" title="Cycle Timeline (T)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="7" width="20" height="10" rx="1"/>
+                <line x1="7" y1="7" x2="7" y2="17"/>
+                <line x1="12" y1="7" x2="12" y2="17"/>
+                <line x1="17" y1="7" x2="17" y2="17"/>
+              </svg>
+            </button>
+            <button id="fullscreen-btn" class="ctrl-btn" title="Fullscreen (F)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+                <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Info Panel -->
+      <div id="info-panel" class="info-panel hidden">
+        <div class="info-header">
+          <h3>File Info</h3>
+          <button id="info-close" class="ctrl-btn">&times;</button>
+        </div>
+        <div id="info-content" class="info-content"></div>
+      </div>
+
+      <!-- Comments Panel -->
+      <div id="comments-panel" class="comments-panel hidden">
+        <div class="comments-header">
+          <h3>Comments</h3>
+          <button id="comments-close" class="ctrl-btn">&times;</button>
+        </div>
+        <div id="comments-list" class="comments-list"></div>
+        <div class="comments-input-bar">
+          <div id="panel-input-tc" class="panel-input-tc">--:--:--</div>
+          <input id="panel-comment-input" type="text" placeholder="Leave your comment..." autocomplete="off">
+          <button id="panel-annotate-btn" class="panel-action-btn" title="Annotate">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+          </button>
+          <button id="panel-send-btn" class="panel-send-btn" title="Add comment (Enter)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Zoom Overlay -->
+      <div id="zoom-overlay" class="zoom-overlay hidden">
+        <canvas id="zoom-canvas"></canvas>
+        <div class="zoom-level" id="zoom-level">2x</div>
+      </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Editor -->
+    <div id="shortcuts-editor" class="shortcuts-editor hidden">
+      <div class="shortcuts-dialog">
+        <div class="shortcuts-header">
+          <h3>Keyboard Shortcuts</h3>
+          <button id="shortcuts-close" class="ctrl-btn">&times;</button>
+        </div>
+        <div class="shortcuts-body" id="shortcuts-body"></div>
+        <div class="shortcuts-footer">
+          <button id="shortcuts-reset-all" class="shortcuts-reset-btn">Reset All to Defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden file input -->
+    <input type="file" id="file-input" accept="video/*,.mp4,.mov,.mkv,.avi,.webm,.m4v,.ogv" style="display:none">
+  </div>
+
+  <script src="player.js"></script>
+</body>
+</html>
