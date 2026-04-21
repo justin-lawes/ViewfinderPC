@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <style>body { margin: 0; background: transparent; overflow: hidden; }</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+  const { ipcRenderer } = require('electron');
+
+  const SIZES = [16, 32, 48, 64, 128, 256];
+
+  function drawIcon(ctx, s) {
+    ctx.clearRect(0, 0, s, s);
+
+    // Background: dark rounded square
+    const r = Math.round(s * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.arcTo(s, 0, s, s, r);
+    ctx.arcTo(s, s, 0, s, r);
+    ctx.arcTo(0, s, 0, 0, r);
+    ctx.arcTo(0, 0, s, 0, r);
+    ctx.closePath();
+
+    const bg = ctx.createLinearGradient(0, 0, s * 0.4, s);
+    bg.addColorStop(0, '#2a2a30');
+    bg.addColorStop(1, '#0c0c10');
+    ctx.fillStyle = bg;
+    ctx.fill();
+
+    // Corner brackets (viewfinder guides)
+    if (s >= 24) {
+      const pad = s * 0.14;
+      const arm = s * 0.16;
+      const lw  = Math.max(1.5, s * 0.044);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.lineWidth   = lw;
+      ctx.lineCap     = 'square';
+      ctx.lineJoin    = 'miter';
+
+      const corners = [
+        [[pad + arm, pad],     [pad,     pad],     [pad,     pad + arm]],
+        [[s-pad-arm, pad],     [s-pad,   pad],     [s-pad,   pad + arm]],
+        [[pad + arm, s-pad],   [pad,     s-pad],   [pad,     s-pad-arm]],
+        [[s-pad-arm, s-pad],   [s-pad,   s-pad],   [s-pad,   s-pad-arm]],
+      ];
+
+      corners.forEach(([a, b, c]) => {
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+        ctx.lineTo(c[0], c[1]);
+        ctx.stroke();
+      });
+    }
+
+    // Lens ring
+    if (s >= 40) {
+      const cr = s * 0.265;
+      ctx.beginPath();
+      ctx.arc(s / 2, s / 2, cr, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.lineWidth   = Math.max(1, s * 0.024);
+      ctx.stroke();
+    }
+
+    // Play triangle
+    const cx = s / 2;
+    const cy = s / 2;
+    const th = s * 0.30;   // height of triangle
+    const tw = s * 0.26;   // width (base to tip)
+    const ox = s * 0.03;   // slight rightward optical offset
+
+    ctx.beginPath();
+    ctx.moveTo(cx - tw / 2 + ox, cy - th / 2);
+    ctx.lineTo(cx + tw / 2 + ox, cy);
+    ctx.lineTo(cx - tw / 2 + ox, cy + th / 2);
+    ctx.closePath();
+    ctx.fillStyle   = '#ffffff';
+    ctx.shadowColor = 'rgba(255,255,255,0.25)';
+    ctx.shadowBlur  = s * 0.07;
+    ctx.fill();
+    ctx.shadowBlur  = 0;
+  }
+
+  (function generate() {
+    const pngData = {};
+    const canvas  = document.getElementById('c');
+
+    for (const s of SIZES) {
+      canvas.width  = s;
+      canvas.height = s;
+      const ctx = canvas.getContext('2d');
+      drawIcon(ctx, s);
+      pngData[s] = canvas.toDataURL('image/png').split(',')[1];
+    }
+
+    ipcRenderer.send('icon-ready', pngData);
+  })();
+</script>
+</body>
+</html>

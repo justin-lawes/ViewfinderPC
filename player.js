@@ -69,6 +69,7 @@
   const infoClose = $('#info-close');
   const infoContent = $('#info-content');
   const zoomBtn = $('#zoom-btn');
+  const aspectBtn = $('#aspect-btn');
 
   // Timeline
   const timelineContainer = $('#timeline-container');
@@ -91,7 +92,6 @@
   let shuttleInterval = null;
   let controlsTimeout = null;
   let isZoomed = false;
-  let zoomLevel = 2;
   let speedMenuOpen = false;
   let currentAspect = 'native';
   let barcodeGenerated = false;
@@ -128,11 +128,14 @@
   }
 
   function loadFile(file) {
-    currentFile = { name: file.name, size: file.size, type: file.type };
+    // In Electron, dragged/picked files expose file.path — use it so sidecars work
+    const filePath = (isElectron && file.path) ? file.path : null;
+    currentFile = { name: file.name, size: file.size, type: file.type, path: filePath };
     const url = URL.createObjectURL(file);
     setVideoSource(url);
     const titleEl = document.querySelector('.win-titlebar-title');
     if (titleEl) titleEl.textContent = file.name + ' — Viewfinder';
+    if (filePath) addToPlaylist(file.name, filePath, true);
   }
 
   function loadFilePath(filePath) {
@@ -146,6 +149,7 @@
     document.title = fileName + ' — Viewfinder';
     const titleEl = document.querySelector('.win-titlebar-title');
     if (titleEl) titleEl.textContent = fileName + ' — Viewfinder';
+    addToPlaylist(fileName, filePath, true);
     // Fetch file size from main process (not available on File objects for path-opened files)
     if (isElectron) {
       window.viewfinder.getFileStats(filePath).then(stats => {
@@ -161,20 +165,62 @@
     video.src = url;
     video.load();
     commentUndoStack = []; // clear undo history — stale entries from a previous file must not bleed into the next
+    setDisplayAspect('native'); // reset any forced aspect ratio override
 
     video.addEventListener('loadedmetadata', function onMeta() {
       video.removeEventListener('loadedmetadata', onMeta);
       welcome.classList.add('hidden');
       player.classList.remove('hidden');
       barcodeGenerated = false;
+      // Re-apply user's chosen speed — video.load() resets playbackRate to 1.0 per HTML5 spec
+      video.playbackRate = userSpeed;
       generateBarcode();
       updateInfoPanel();
       detectFPS();
       loadCommentsFromFile();
       if (isElectron && video.videoWidth && video.videoHeight) {
-        const chromeH = (timelineContainer ? timelineContainer.offsetHeight : 0) +
-                        (document.querySelector('.control-bar') ? document.querySelector('.control-bar').offsetHeight : 40);
-        window.viewfinder.setAspectRatio(video.videoWidth / video.videoHeight, chromeH);
+        // Defer one frame so the browser has done a layout pass (offsetHeight would be
+        // 0 for elements that just became visible before layout runs).
+        // Double-rAF: first frame applies styles, second frame has guaranteed layout.
+        requestAnimationFrame(() => requestAnimationFrame(async () => {
+          // Use known CSS heights for fixed elements; only timeline varies by mode.
+          const WIN_TITLEBAR_H = 32;   // CSS: .win-titlebar { height: 32px }
+          const CONTROL_BAR_H = 40;    // CSS: .control-bar { height: 40px }
+          const tlH = timelineContainer
+            ? (timelineContainer.offsetHeight || 50)  // fall back to CSS default if 0
+            : 50;
+          const chromeH = WIN_TITLEBAR_H + tlH + CONTROL_BAR_H;
+          console.log('[resize] innerW:', window.innerWidth, 'innerH:', window.innerHeight,
+            'tlH:', tlH, 'chromeH:', chromeH,
+            'video:', video.videoWidth, 'x', video.videoHeight);
+
+          const aspect = video.videoWidth / video.videoHeight;
+          const maxW = Math.floor(window.screen.availWidth * 0.95);
+          const maxH = Math.floor(window.screen.availHeight * 0.95);
+
+          // Mac approach: keep current window width, adjust height to match aspect ratio.
+          // Much more reliable than trying to hit native pixel dimensions.
+          let targetW = Math.round(window.innerWidth);
+          let targetVideoH = Math.round(targetW / aspect);
+
+          // Scale down if derived height (or width) exceeds screen
+          if (targetVideoH + chromeH > maxH || targetW > maxW) {
+            const scale = Math.min(maxW / targetW, (maxH - chromeH) / targetVideoH);
+            targetW = Math.round(targetW * scale);
+            targetVideoH = Math.round(targetVideoH * scale);
+          }
+
+          if (targetW < 640) {
+            targetW = 640;
+            targetVideoH = Math.round(targetW / aspect);
+          }
+
+          // Resize to exact video dimensions. On Windows, setAspectRatio with extraSize
+          // is broken (snaps against full height, ignoring chrome) so we skip it here;
+          // the main process will-resize handler enforces ratio during live drag instead.
+          await window.viewfinder.resizeWindow(targetW, targetVideoH + chromeH);
+          window.viewfinder.setAspectRatio(aspect, chromeH); // no-op on Win, works on Mac
+        }));
       }
     });
   }
@@ -182,24 +228,32 @@
   // --- Drag & Drop ---
   let dragCounter = 0;
 
+  const VIDEO_EXTENSIONS = /\.(mp4|mov|mkv|avi|webm|m4v|ogv|wmv|flv|mts|m2ts|ts|vob|3gp|f4v)$/i;
+
+  function isInsidePlaylistPanel(el) {
+    return playlistPanel && playlistPanel.contains(el);
+  }
+
   document.addEventListener('dragenter', (e) => {
     e.preventDefault();
+    if (isInsidePlaylistPanel(e.target)) return;
     dragCounter++;
     if (dragCounter === 1) dropOverlay.classList.remove('hidden');
   });
 
   document.addEventListener('dragleave', (e) => {
     e.preventDefault();
+    if (isInsidePlaylistPanel(e.target)) return;
     dragCounter--;
     if (dragCounter === 0) dropOverlay.classList.add('hidden');
   });
 
   document.addEventListener('dragover', (e) => e.preventDefault());
 
-  const VIDEO_EXTENSIONS = /\.(mp4|mov|mkv|avi|webm|m4v|ogv|wmv|flv|mts|m2ts|ts|vob|3gp|f4v)$/i;
-
   document.addEventListener('drop', (e) => {
     e.preventDefault();
+    // If dropped onto the playlist panel, let its own handler deal with it
+    if (isInsidePlaylistPanel(e.target)) return;
     dragCounter = 0;
     dropOverlay.classList.add('hidden');
     const file = e.dataTransfer.files[0];
@@ -217,62 +271,61 @@
   let isScrubbing = false;
   let wasPlayingBeforeScrub = false;
   let scrubTarget = 0;
-  let scrubDirty = false;
-  let scrubRafId = null;
-  let scrubVfcId = null;
-  let scrubRect = null; // cached timeline bounding rect
+  let scrubDirty = false;       // a newer target arrived while seek was in-flight
+  let scrubSeekPending = false; // a seek has been issued and not yet completed
+  let scrubRect = null;         // cached timeline bounding rect
 
-  // fastSeek shim — keyframe-accurate during scrub, falls back to currentTime
-  function seekFast(t) {
-    if (typeof video.fastSeek === 'function') video.fastSeek(t);
+  // Use fastSeek() during scrubbing — snaps to nearest keyframe, much faster than
+  // currentTime which decodes to the exact frame. Precise seek is applied on mouse up.
+  const hasFastSeek = typeof video.fastSeek === 'function';
+  function scrubSeek(t) {
+    if (hasFastSeek) video.fastSeek(t);
     else video.currentTime = t;
   }
 
-  // Called each time a new video frame is presented (RVFC) — issue next seek if target moved
-  function onScrubFrame() {
+  // Seeked-event-gated scrub: fires when the video decoder confirms a seek completed.
+  // If the mouse moved while the seek was in-flight (scrubDirty), issue one more seek.
+  function onScrubSeeked() {
     if (!isScrubbing) return;
+    scrubSeekPending = false;
     if (scrubDirty) {
       scrubDirty = false;
-      seekFast(scrubTarget);
+      scrubSeekPending = true;
+      scrubSeek(scrubTarget);
     }
-    scrubVfcId = video.requestVideoFrameCallback(onScrubFrame);
-  }
-
-  // RAF fallback for browsers/content where RVFC isn't available
-  function rafFallback() {
-    if (!isScrubbing) return;
-    if (scrubDirty) {
-      scrubDirty = false;
-      seekFast(scrubTarget);
-    }
-    scrubRafId = requestAnimationFrame(rafFallback);
   }
 
   function startScrub() {
     if (isScrubbing) return;
     isScrubbing = true;
+    scrubSeekPending = false;
+    scrubDirty = false;
     wasPlayingBeforeScrub = !video.paused;
     video.pause();
     scrubRect = timelineContainer.getBoundingClientRect(); // cache once
-    if (typeof video.requestVideoFrameCallback === 'function') {
-      scrubVfcId = video.requestVideoFrameCallback(onScrubFrame);
-    } else {
-      scrubRafId = requestAnimationFrame(rafFallback);
-    }
+    video.addEventListener('seeked', onScrubSeeked);
   }
 
   function endScrub() {
     isScrubbing = false;
-    if (scrubVfcId) {
-      if (typeof video.cancelVideoFrameCallback === 'function')
-        video.cancelVideoFrameCallback(scrubVfcId);
-      scrubVfcId = null;
-    }
-    if (scrubRafId) { cancelAnimationFrame(scrubRafId); scrubRafId = null; }
+    video.removeEventListener('seeked', onScrubSeeked);
+    scrubSeekPending = false;
     scrubRect = null;
-    // Final precise frame-accurate seek
+    // Final precise seek to exact frame at mouse release position
     video.currentTime = scrubTarget;
     if (wasPlayingBeforeScrub) video.play();
+  }
+
+  // Issue or queue a seek to the current scrubTarget.
+  // Called by both timeline and video-drag scrub paths.
+  function flushScrub() {
+    if (!scrubSeekPending) {
+      scrubSeekPending = true;
+      scrubDirty = false;
+      scrubSeek(scrubTarget);
+    } else {
+      scrubDirty = true;
+    }
   }
 
   // Click to play/pause, drag horizontally to scrub, double-click for fullscreen
@@ -302,7 +355,7 @@
       const pxPerSec = video.duration / video.parentElement.offsetWidth;
       const newTime  = videoMouseStartTime + dx * pxPerSec;
       scrubTarget    = Math.max(0, Math.min(video.duration, newTime));
-      scrubDirty     = true;
+      flushScrub();
       timecodeEl.textContent = formatTimecode(scrubTarget);
       updateFrameCount(scrubTarget);
       // Move playhead to cursor position (not video.currentTime which lags behind)
@@ -336,11 +389,14 @@
   video.addEventListener('play', () => {
     playIcon.classList.add('hidden');
     pauseIcon.classList.remove('hidden');
+    showControls(); // kick off the 3s auto-hide timer
   });
 
   video.addEventListener('pause', () => {
     playIcon.classList.remove('hidden');
     pauseIcon.classList.add('hidden');
+    clearTimeout(controlsTimeout);
+    if (!allControlsHidden) player.classList.remove('controls-hidden');
   });
 
   // --- Timecode ---
@@ -399,8 +455,20 @@
     frameCountEl.textContent = 'F' + String(totalFrame).padStart(digits, '0');
   }
 
+  // --- Timecode click-to-copy ---
+  timecodeEl.title = 'Click to copy timecode';
+  timecodeEl.addEventListener('click', () => {
+    if (!video.src) return;
+    const tc = timecodeEl.textContent;
+    navigator.clipboard.writeText(tc)
+      .then(() => showToast('Timecode copied: ' + tc))
+      .catch(() => {});
+  });
+
   // --- FPS Detection ---
+  let fpsDetectGeneration = 0; // incremented on each new file load to cancel stale polls
   function detectFPS() {
+    const gen = ++fpsDetectGeneration;
     // Use a hidden offscreen video to detect FPS without affecting the visible player
     if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
       const detector = document.createElement('video');
@@ -450,6 +518,7 @@
       // Sample currentTime changes during actual playback to infer frame rate
       let lastT = -1, deltas = [], rafId = null;
       function poll() {
+        if (gen !== fpsDetectGeneration) { cancelAnimationFrame(rafId); return; } // stale
         const t = video.currentTime;
         if (!video.paused && t !== lastT && lastT >= 0) {
           const d = t - lastT;
@@ -470,6 +539,7 @@
         }
       }
       function startPoll() {
+        if (gen !== fpsDetectGeneration) return; // stale listener from a previous file load
         if (!rafId) { lastT = -1; deltas = []; rafId = requestAnimationFrame(poll); }
       }
       if (!video.paused) {
@@ -659,8 +729,9 @@
     const rect  = scrubRect || timelineContainer.getBoundingClientRect();
     const pct   = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     scrubTarget = pct * video.duration;
-    scrubDirty  = true;
+    flushScrub();
     playhead.style.transform = 'translateX(' + (pct * rect.width) + 'px)';
+    progressFill.style.width = (pct * 100) + '%';
     timecodeEl.textContent = formatTimecode(scrubTarget);
     updateFrameCount(scrubTarget);
   }
@@ -684,12 +755,14 @@
   volumeBtn.addEventListener('click', () => {
     video.muted = !video.muted;
     updateVolumeUI();
+    try { localStorage.setItem('vf_muted', video.muted); } catch {}
   });
 
   volumeSlider.addEventListener('input', () => {
     video.volume = parseFloat(volumeSlider.value);
     video.muted = false;
     updateVolumeUI();
+    try { localStorage.setItem('vf_volume', video.volume); localStorage.setItem('vf_muted', 'false'); } catch {}
   });
 
   function updateVolumeUI() {
@@ -734,9 +807,9 @@
   // --- Playback Speed ---
   speedBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    const wasOpen = speedMenuOpen;
     closeMenus();
-    speedMenuOpen = !speedMenuOpen;
-    if (speedMenuOpen) showSpeedMenu();
+    if (!wasOpen) showSpeedMenu();
   });
 
   function showSpeedMenu() {
@@ -755,15 +828,65 @@
       btn.textContent = s + 'x';
       if (video.playbackRate === s) btn.classList.add('selected');
       btn.addEventListener('click', () => {
-        userSpeed = s;
-        video.playbackRate = s;
-        speedBtn.textContent = s + 'x';
+        setUserSpeed(s);
         closeMenus();
       });
       menu.appendChild(btn);
     });
 
     player.appendChild(menu);
+  }
+
+  // --- Aspect Ratio Override ---
+  function showAspectMenu() {
+    const menu = document.createElement('div');
+    menu.className = 'aspect-menu';
+    menu.id = 'aspect-menu';
+    const rect = aspectBtn.getBoundingClientRect();
+    const playerRect = player.getBoundingClientRect();
+    menu.style.right = (playerRect.right - rect.right) + 'px';
+    aspects.forEach(a => {
+      const btn = document.createElement('button');
+      btn.textContent = a.label;
+      if (currentAspect === a.value) btn.classList.add('selected');
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setDisplayAspect(a.value);
+        closeMenus();
+      });
+      menu.appendChild(btn);
+    });
+    player.appendChild(menu);
+  }
+
+  function setDisplayAspect(value) {
+    currentAspect = value;
+    if (value === 'native') {
+      // Restore CSS-driven sizing
+      video.style.width = '';
+      video.style.height = '';
+      video.style.maxWidth = '';
+      video.style.maxHeight = '';
+      video.style.aspectRatio = '';
+    } else {
+      // Override element sizing: auto + max-constraints + explicit AR forces letterboxing
+      video.style.width = 'auto';
+      video.style.height = 'auto';
+      video.style.maxWidth = '100%';
+      video.style.maxHeight = '100%';
+      video.style.aspectRatio = String(value);
+    }
+    const a = aspects.find(a => a.value === value);
+    if (aspectBtn) aspectBtn.textContent = a ? a.label : 'AR';
+  }
+
+  if (aspectBtn) {
+    aspectBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const wasOpen = !!document.getElementById('aspect-menu');
+      closeMenus();
+      if (!wasOpen) showAspectMenu();
+    });
   }
 
   // --- Crop/Letterbox (buttons removed but keep state for menu commands) ---
@@ -989,10 +1112,10 @@
       magnCtx.arc(60, 60, 60, 0, Math.PI * 2);
       magnCtx.clip();
       magnCtx.imageSmoothingEnabled = false;
-      magnCtx.drawImage(colorCanvas,
-        Math.max(0, px - srcR), Math.max(0, py - srcR), srcR * 2, srcR * 2,
-        0, 0, 120, 120
-      );
+      // Clamp source rect so it never overruns the canvas on any edge
+      const srcX = Math.max(0, Math.min(colorCanvas.width  - srcR * 2, px - srcR));
+      const srcY = Math.max(0, Math.min(colorCanvas.height - srcR * 2, py - srcR));
+      magnCtx.drawImage(colorCanvas, srcX, srcY, srcR * 2, srcR * 2, 0, 0, 120, 120);
       // Crosshair at center
       magnCtx.strokeStyle = 'rgba(255,255,255,0.9)';
       magnCtx.lineWidth = 1;
@@ -1092,9 +1215,22 @@
   document.addEventListener('click', () => closeMenus());
 
   // --- Auto-hide controls ---
+  // Show controls immediately; if playing, start 3s timer to re-hide on inactivity.
   function showControls() {
+    if (allControlsHidden) return;
     player.classList.remove('controls-hidden');
+    clearTimeout(controlsTimeout);
+    if (!video.paused) {
+      controlsTimeout = setTimeout(() => {
+        if (!video.paused && !annotationMode && !colorPickerActive) {
+          player.classList.add('controls-hidden');
+        }
+      }, 3000);
+    }
   }
+
+  // Reset the auto-hide timer on mouse movement.
+  player.addEventListener('mousemove', showControls);
 
   // --- Keyboard Shortcuts Manager ---
   const SHORTCUT_DEFAULTS = {
@@ -1121,6 +1257,7 @@
     'color-picker':    { key: 'c',          label: 'Color Picker',               section: 'View' },
     'new-comment':     { key: 'n',          label: 'New Comment',                section: 'Comments' },
     'toggle-comments': { key: ';',          label: 'Toggle Comments Panel',      section: 'Comments' },
+    'toggle-playlist': { key: 'p',          label: 'Toggle Playlist Panel',      section: 'View' },
     'annotate':        { key: 'd',          label: 'Annotate',                   section: 'Comments' },
     'delete-comment':  { key: 'Delete',     label: 'Delete Comment',             section: 'Comments' },
     'export-comments': { key: 'e',          shift: true, label: 'Export Comments', section: 'Comments' },
@@ -1242,6 +1379,7 @@
       if (annotationMode) { exitAnnotationMode(false); return; }
       if (colorPickerActive) { toggleColorPicker(); return; }
       if (commentsPanelOpen) toggleCommentsPanel();
+      if (playlistPanelOpen) togglePlaylistPanel();
       return;
     }
 
@@ -1280,15 +1418,23 @@
       updatePlayhead();
     } else if (sm.matches(e, 'volume-up')) {
       e.preventDefault();
-      video.volume = Math.min(1, video.volume + 0.05);
-      video.muted = false;
-      volumeSlider.value = video.volume;
-      updateVolumeUI();
+      if (playlistPanelOpen && playlistItems.length > 0) {
+        playlistPrev();
+      } else {
+        video.volume = Math.min(1, video.volume + 0.05);
+        video.muted = false;
+        volumeSlider.value = video.volume;
+        updateVolumeUI();
+      }
     } else if (sm.matches(e, 'volume-down')) {
       e.preventDefault();
-      video.volume = Math.max(0, video.volume - 0.05);
-      volumeSlider.value = video.volume;
-      updateVolumeUI();
+      if (playlistPanelOpen && playlistItems.length > 0) {
+        playlistNext();
+      } else {
+        video.volume = Math.max(0, video.volume - 0.05);
+        volumeSlider.value = video.volume;
+        updateVolumeUI();
+      }
     } else if (sm.matches(e, 'shuttle-back')) {
       shuttleSpeed = Math.max(-2, shuttleSpeed - 1);
       applyShuttle();
@@ -1322,6 +1468,8 @@
       if (annotationMode) { exitAnnotationMode(false); } else { enterAnnotationMode(); }
     } else if (sm.matches(e, 'toggle-comments')) {
       toggleCommentsPanel();
+    } else if (sm.matches(e, 'toggle-playlist')) {
+      togglePlaylistPanel();
     } else if (sm.matches(e, 'hide-controls')) {
       toggleHideAllControls();
     } else if (sm.matches(e, 'delete-comment')) {
@@ -1337,11 +1485,11 @@
     } else if (sm.matches(e, 'speed-down')) {
       if (shuttleSpeed !== 0) return;
       const idx = speeds.indexOf(userSpeed);
-      if (idx > 0) { userSpeed = speeds[idx - 1]; video.playbackRate = userSpeed; speedBtn.textContent = userSpeed + 'x'; }
+      if (idx > 0) setUserSpeed(speeds[idx - 1]);
     } else if (sm.matches(e, 'speed-up')) {
       if (shuttleSpeed !== 0) return;
       const idx = speeds.indexOf(userSpeed);
-      if (idx < speeds.length - 1) { userSpeed = speeds[idx + 1]; video.playbackRate = userSpeed; speedBtn.textContent = userSpeed + 'x'; }
+      if (idx < speeds.length - 1) setUserSpeed(speeds[idx + 1]);
     }
   });
 
@@ -1372,6 +1520,32 @@
 
   let userSpeed = 1; // Track user-chosen speed separately from shuttle
 
+  // Central helper: sets speed, updates UI, persists to localStorage
+  function setUserSpeed(s) {
+    userSpeed = s;
+    video.playbackRate = s;
+    speedBtn.textContent = s + 'x';
+    try { localStorage.setItem('vf_speed', s); } catch {}
+  }
+
+  // --- Restore persisted volume & speed ---
+  try {
+    const savedVol = parseFloat(localStorage.getItem('vf_volume'));
+    if (!isNaN(savedVol) && savedVol >= 0 && savedVol <= 1) {
+      video.volume = savedVol;
+      volumeSlider.value = savedVol;
+    }
+    if (localStorage.getItem('vf_muted') === 'true') video.muted = true;
+    updateVolumeUI();
+    const savedSpeed = parseFloat(localStorage.getItem('vf_speed'));
+    if (!isNaN(savedSpeed) && speeds.includes(savedSpeed)) {
+      userSpeed = savedSpeed;
+      speedBtn.textContent = savedSpeed + 'x';
+      // video.playbackRate is applied on next play — setting it here too for consistency
+      video.playbackRate = savedSpeed;
+    }
+  } catch {}
+
   function resetShuttle() {
     shuttleSpeed = 0;
     clearInterval(shuttleInterval);
@@ -1390,7 +1564,6 @@
   // Comment data model: {id, time, text, author, createdAt, annotations: [{type, color, lineWidth, points, text, fontSize}], thumbnailDataUrl}
   let comments = [];
   let commentUndoStack = []; // each entry: { deleted: commentObject, index: number }
-  let currentFilePath = null; // for sidecar persistence
 
   function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1508,6 +1681,129 @@
         highlightCommentInPanel(c.id);
       });
       commentMarkers.appendChild(marker);
+    });
+  }
+
+  // --- Playlist Panel ---
+  const playlistPanel = $('#playlist-panel');
+  const playlistList = $('#playlist-list');
+  const playlistBtn = $('#playlist-btn');
+  const playlistClose = $('#playlist-close');
+  const playlistDropZone = $('#playlist-drop-zone');
+  let playlistPanelOpen = false;
+  let playlistItems = []; // [{name, path}]
+  let playlistIndex = -1; // index of currently loaded item (-1 = not from playlist)
+
+  function addToPlaylist(name, path, autoPlay) {
+    if (!path) return;
+    // Don't add duplicates
+    const existing = playlistItems.findIndex(x => x.path === path);
+    if (existing !== -1) {
+      if (autoPlay) { playlistIndex = existing; renderPlaylist(); }
+      return;
+    }
+    playlistItems.push({ name, path });
+    if (autoPlay) playlistIndex = playlistItems.length - 1;
+    renderPlaylist();
+  }
+
+  function renderPlaylist() {
+    if (!playlistList) return;
+    playlistList.innerHTML = '';
+    playlistItems.forEach((item, i) => {
+      const el = document.createElement('div');
+      el.className = 'playlist-item' + (i === playlistIndex ? ' active' : '');
+      el.dataset.index = i;
+      el.innerHTML = `
+        <span class="playlist-item-index">${i + 1}</span>
+        <span class="playlist-item-name" title="${item.name}">${item.name}</span>
+        <button class="playlist-item-remove" data-index="${i}" title="Remove">&times;</button>
+      `;
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('playlist-item-remove')) {
+          const idx = parseInt(e.target.dataset.index);
+          playlistItems.splice(idx, 1);
+          if (playlistIndex === idx) playlistIndex = -1;
+          else if (playlistIndex > idx) playlistIndex--;
+          renderPlaylist();
+          return;
+        }
+        playlistIndex = i;
+        loadFilePath(item.path);
+        renderPlaylist();
+      });
+      playlistList.appendChild(el);
+    });
+    // Scroll active item into view
+    const active = playlistList.querySelector('.playlist-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  function playlistPrev() {
+    if (playlistItems.length === 0) return;
+    if (playlistIndex <= 0) playlistIndex = playlistItems.length - 1;
+    else playlistIndex--;
+    loadFilePath(playlistItems[playlistIndex].path);
+    renderPlaylist();
+  }
+
+  function playlistNext() {
+    if (playlistItems.length === 0) return;
+    if (playlistIndex >= playlistItems.length - 1) playlistIndex = 0;
+    else playlistIndex++;
+    loadFilePath(playlistItems[playlistIndex].path);
+    renderPlaylist();
+  }
+
+  function togglePlaylistPanel() {
+    playlistPanelOpen = !playlistPanelOpen;
+    if (playlistPanel) playlistPanel.classList.toggle('hidden', !playlistPanelOpen);
+    if (playlistBtn) playlistBtn.classList.toggle('active', playlistPanelOpen);
+    const panelWidth = playlistPanelOpen ? '240px' : '0';
+    const vc = document.querySelector('.video-container');
+    if (vc) vc.style.marginLeft = panelWidth;
+    timelineContainer.style.marginLeft = panelWidth;
+    const bar = document.querySelector('.control-bar');
+    if (bar) bar.style.marginLeft = panelWidth;
+    if (isElectron) window.viewfinder.clearAspectRatio();
+    if (!playlistPanelOpen && isElectron && video.videoWidth && video.videoHeight) {
+      const chromeH = (timelineContainer ? timelineContainer.offsetHeight : 0) +
+                      (document.querySelector('.control-bar') ? document.querySelector('.control-bar').offsetHeight : 40);
+      window.viewfinder.setAspectRatio(video.videoWidth / video.videoHeight, chromeH);
+    }
+  }
+
+  if (playlistBtn) playlistBtn.addEventListener('click', togglePlaylistPanel);
+  if (playlistClose) playlistClose.addEventListener('click', togglePlaylistPanel);
+
+  // Drag-drop onto the playlist drop zone
+  if (playlistDropZone) {
+    playlistDropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      playlistDropZone.classList.add('drag-over');
+    });
+    playlistDropZone.addEventListener('dragleave', () => {
+      playlistDropZone.classList.remove('drag-over');
+    });
+    playlistDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      playlistDropZone.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm|m4v|ogv|wmv|flv|mts|m2ts)$/i.test(f.name));
+      if (files.length === 0) return;
+      const wasEmpty = playlistItems.length === 0;
+      files.forEach((f, i) => {
+        const path = isElectron && f.path ? f.path : null;
+        if (!path) return;
+        addToPlaylist(f.name, path, wasEmpty && i === 0);
+      });
+      // Auto-load first dropped file if nothing was playing
+      if (wasEmpty && playlistItems.length > 0 && playlistIndex === -1) {
+        playlistIndex = 0;
+        loadFilePath(playlistItems[0].path);
+        renderPlaylist();
+      }
     });
   }
 
@@ -2341,18 +2637,12 @@
       video.currentTime = Math.max(0, video.currentTime - 10);
     });
     vf.onMenuCommand('speed-up', () => {
-      const idx = speeds.indexOf(video.playbackRate);
-      if (idx < speeds.length - 1) {
-        video.playbackRate = speeds[idx + 1];
-        speedBtn.textContent = video.playbackRate + 'x';
-      }
+      const idx = speeds.indexOf(userSpeed);
+      if (idx < speeds.length - 1) setUserSpeed(speeds[idx + 1]);
     });
     vf.onMenuCommand('speed-down', () => {
-      const idx = speeds.indexOf(video.playbackRate);
-      if (idx > 0) {
-        video.playbackRate = speeds[idx - 1];
-        speedBtn.textContent = video.playbackRate + 'x';
-      }
+      const idx = speeds.indexOf(userSpeed);
+      if (idx > 0) setUserSpeed(speeds[idx - 1]);
     });
     vf.onMenuCommand('toggle-thumbnails', () => {
       cycleTimelineMode();
@@ -2368,6 +2658,9 @@
     vf.onMenuCommand('aspect-fill', () => {
       cropMode = 'fill';
       video.style.objectFit = 'cover';
+    });
+    vf.onMenuCommand('set-display-aspect', (value) => {
+      setDisplayAspect(value);
     });
     vf.onMenuCommand('video-size', (scale) => {
       if (!video.videoWidth || !video.videoHeight) return;
@@ -2405,6 +2698,9 @@
     });
     vf.onMenuCommand('open-shortcuts-editor', () => openShortcutsEditor());
     vf.onMenuCommand('undo-comment-delete', () => undoDeleteComment());
+    vf.onMenuCommand('always-on-top', (enabled) => {
+      showToast('Always on Top: ' + (enabled ? 'On' : 'Off'));
+    });
   }
 
 })();

@@ -35,8 +35,10 @@
     },
     "fileAssociations": [
       {
-        "ext": ["mp4", "mov", "mkv", "avi", "webm", "m4v", "ogv"],
-        "name": "Video File",
+        "ext": ["mp4", "mov", "mkv", "avi", "webm", "m4v", "ogv", "wmv", "flv", "mts", "m2ts"],
+        "name": "ViewfinderVideo",
+        "description": "Video File",
+        "icon": "icon.ico",
         "role": "Viewer"
       }
     ]
