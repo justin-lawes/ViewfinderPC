@@ -284,6 +284,23 @@ kbd {
   object-fit: contain;
 }
 
+/* ===== Letterbox Mode =====
+   Video stays at its natural pixel size; the window can be resized freely
+   around it. A thin light-grey border hugs the video (outside its content
+   box, so it never intersects the picture) and the surrounding area is black. */
+.player.letterbox-mode .video-container {
+  background: #000;
+}
+.player.letterbox-mode .video-container video {
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 2px);
+  max-height: calc(100% - 2px);
+  object-fit: contain;
+  border: 1px solid rgba(200, 200, 200, 0.35);
+  box-sizing: content-box;
+}
+
 
 /* ===== Controls ===== */
 .controls {
@@ -727,6 +744,20 @@ kbd {
 :fullscreen .video-container,
 :-webkit-full-screen .video-container {
   height: 100%;
+}
+
+/* Suppress letterbox styling in fullscreen — the border and max-size caps
+   don't make sense when the whole display is our canvas. */
+:fullscreen.letterbox-mode .video-container video,
+:-webkit-full-screen.letterbox-mode .video-container video,
+.player.letterbox-mode:fullscreen .video-container video,
+.player.letterbox-mode:-webkit-full-screen .video-container video {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: none;
+  box-sizing: border-box;
 }
 
 /* ===== Scrollbar ===== */

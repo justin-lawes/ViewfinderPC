@@ -161,6 +161,41 @@
     }
   }
 
+  // --- Letterbox Mode ---
+  // When enabled: aspect lock is released, window can be resized freely,
+  // video stays at intrinsic size (up to window bounds), surrounded by
+  // black with a thin light-grey border. Persists across launches.
+  let letterboxMode = false;
+  try { letterboxMode = localStorage.getItem('vf_letterbox') === 'true'; } catch {}
+
+  function applyLetterboxMode(enabled) {
+    letterboxMode = !!enabled;
+    try { localStorage.setItem('vf_letterbox', letterboxMode ? 'true' : 'false'); } catch {}
+    if (letterboxMode) {
+      player.classList.add('letterbox-mode');
+      if (isElectron) window.viewfinder.clearAspectRatio();
+    } else {
+      player.classList.remove('letterbox-mode');
+      // Restore aspect lock from current video, if any is loaded
+      if (isElectron && video.videoWidth && video.videoHeight) {
+        const WIN_TITLEBAR_H = 32;
+        const CONTROL_BAR_H = 40;
+        const tlH = timelineContainer ? (timelineContainer.offsetHeight || 50) : 50;
+        const chromeH = WIN_TITLEBAR_H + tlH + CONTROL_BAR_H;
+        window.viewfinder.setAspectRatio(video.videoWidth / video.videoHeight, chromeH);
+      }
+    }
+    showToast('Letterbox Mode: ' + (letterboxMode ? 'On' : 'Off'));
+  }
+
+  // Apply saved letterbox state at startup (after player element is available).
+  if (letterboxMode) {
+    player.classList.add('letterbox-mode');
+  }
+  if (isElectron && window.viewfinder.syncLetterboxMenu) {
+    window.viewfinder.syncLetterboxMenu(letterboxMode);
+  }
+
   function setVideoSource(url) {
     video.src = url;
     video.load();
@@ -178,7 +213,9 @@
       updateInfoPanel();
       detectFPS();
       loadCommentsFromFile();
-      if (isElectron && video.videoWidth && video.videoHeight) {
+      if (isElectron && video.videoWidth && video.videoHeight && !letterboxMode) {
+        // Letterbox mode keeps the window free-form and the video at its
+        // natural size, so skip the auto-resize/aspect-lock dance.
         // Defer one frame so the browser has done a layout pass (offsetHeight would be
         // 0 for elements that just became visible before layout runs).
         // Double-rAF: first frame applies styles, second frame has guaranteed layout.
@@ -2706,6 +2743,9 @@
     vf.onMenuCommand('undo-comment-delete', () => undoDeleteComment());
     vf.onMenuCommand('always-on-top', (enabled) => {
       showToast('Always on Top: ' + (enabled ? 'On' : 'Off'));
+    });
+    vf.onMenuCommand('letterbox-mode', (enabled) => {
+      applyLetterboxMode(enabled);
     });
   }
 

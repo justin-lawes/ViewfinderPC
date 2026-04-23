@@ -260,6 +260,16 @@ function buildMenu() {
           },
         },
         {
+          id: 'letterbox-mode-menu',
+          label: 'Letterbox Mode',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          type: 'checkbox',
+          checked: false,
+          click: (menuItem) => {
+            sendToRenderer('letterbox-mode', menuItem.checked);
+          },
+        },
+        {
           label: 'Toggle Info Panel',
           accelerator: 'I',
           click: () => sendToRenderer('toggle-info'),
@@ -431,6 +441,11 @@ ipcMain.handle('clear-aspect-ratio', () => {
   } else {
     aspectLock = null;
   }
+});
+
+ipcMain.handle('sync-letterbox-menu', (event, enabled) => {
+  const item = Menu.getApplicationMenu()?.getMenuItemById('letterbox-mode-menu');
+  if (item) item.checked = !!enabled;
 });
 
 ipcMain.handle('resize-window', (event, w, h) => {

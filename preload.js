@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('viewfinder', {
   getUsername: () => ipcRenderer.invoke('get-username'),
   setAspectRatio: (ratio, extraH) => ipcRenderer.invoke('set-aspect-ratio', ratio, extraH),
   clearAspectRatio: () => ipcRenderer.invoke('clear-aspect-ratio'),
+  syncLetterboxMenu: (enabled) => ipcRenderer.invoke('sync-letterbox-menu', enabled),
   isElectron: true,
   platform: process.platform,
 });
