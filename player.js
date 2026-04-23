@@ -1029,8 +1029,11 @@
     // revealing overflow when video > container, and for sliding around the
     // black area when video < container).
     const cRect = videoContainer.getBoundingClientRect();
-    const dx = Math.abs(video.offsetWidth - cRect.width) / 2;
-    const dy = Math.abs(video.offsetHeight - cRect.height) / 2;
+    // lbPan is applied outside scale(), so use the visible (scaled) video size.
+    const visW = video.offsetWidth * zoomScale;
+    const visH = video.offsetHeight * zoomScale;
+    const dx = Math.abs(visW - cRect.width) / 2;
+    const dy = Math.abs(visH - cRect.height) / 2;
     lbPanX = Math.max(-dx, Math.min(dx, lbPanX));
     lbPanY = Math.max(-dy, Math.min(dy, lbPanY));
   }
@@ -1039,9 +1042,13 @@
     if (colorPickerActive) return;
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.8 : 1.25;
-    zoomScale = Math.max(1, Math.min(10, zoomScale * delta));
-    if (zoomScale < 1.05) zoomScale = 1;
+    // In letterbox mode the scroll wheel can shrink the video below fit
+    // (down to 0.1x) so the user can park it inside the black frame.
+    const minZoom = letterboxMode ? 0.1 : 1;
+    zoomScale = Math.max(minZoom, Math.min(10, zoomScale * delta));
+    if (!letterboxMode && zoomScale < 1.05) zoomScale = 1;
     clampPan();
+    if (letterboxMode) clampLetterboxPan();
     applyZoom();
   }, { passive: false });
 
