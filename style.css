@@ -287,15 +287,19 @@ kbd {
 /* ===== Letterbox Mode =====
    Video stays at its natural pixel size; the window can be resized freely
    around it. A thin light-grey border hugs the video (outside its content
-   box, so it never intersects the picture) and the surrounding area is black. */
+   box, so it never intersects the picture) and the surrounding area is black.
+   --vf-video-w / --vf-video-h are set from JS on loadedmetadata to the
+   video's intrinsic pixel size, and act as the upper bound so the video
+   never scales up past native. The container-relative cap (100% - 2px)
+   keeps it shrinking down when the window is smaller than the video. */
 .player.letterbox-mode .video-container {
   background: #000;
 }
 .player.letterbox-mode .video-container video {
   width: auto;
   height: auto;
-  max-width: calc(100% - 2px);
-  max-height: calc(100% - 2px);
+  max-width: min(var(--vf-video-w, 100%), calc(100% - 2px));
+  max-height: min(var(--vf-video-h, 100%), calc(100% - 2px));
   object-fit: contain;
   border: 1px solid rgba(200, 200, 200, 0.35);
   box-sizing: content-box;

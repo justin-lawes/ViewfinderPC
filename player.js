@@ -213,6 +213,11 @@
       updateInfoPanel();
       detectFPS();
       loadCommentsFromFile();
+      // Publish intrinsic pixel dimensions for the letterbox-mode CSS cap.
+      if (video.videoWidth && video.videoHeight) {
+        player.style.setProperty('--vf-video-w', video.videoWidth + 'px');
+        player.style.setProperty('--vf-video-h', video.videoHeight + 'px');
+      }
       if (isElectron && video.videoWidth && video.videoHeight && !letterboxMode) {
         // Letterbox mode keeps the window free-form and the video at its
         // natural size, so skip the auto-resize/aspect-lock dance.
