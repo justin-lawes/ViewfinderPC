@@ -168,14 +168,41 @@
   let letterboxMode = false;
   try { letterboxMode = localStorage.getItem('vf_letterbox') === 'true'; } catch {}
 
+  // Compute inline width/height so the video fits the container but never
+  // scales above its intrinsic pixel dimensions.
+  function applyLetterboxSize() {
+    if (!letterboxMode || !video.videoWidth || !video.videoHeight) {
+      video.style.width = '';
+      video.style.height = '';
+      return;
+    }
+    const vc = document.getElementById('video-container');
+    if (!vc) return;
+    const rect = vc.getBoundingClientRect();
+    // Subtract 2px for the 1px border on each side (box-sizing: content-box).
+    const availW = Math.max(0, rect.width - 2);
+    const availH = Math.max(0, rect.height - 2);
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    // Scale = 1 keeps intrinsic; shrink proportionally if container is smaller.
+    const scale = Math.min(1, availW / vw, availH / vh);
+    const w = Math.floor(vw * scale);
+    const h = Math.floor(vh * scale);
+    video.style.width = w + 'px';
+    video.style.height = h + 'px';
+  }
+
   function applyLetterboxMode(enabled) {
     letterboxMode = !!enabled;
     try { localStorage.setItem('vf_letterbox', letterboxMode ? 'true' : 'false'); } catch {}
     if (letterboxMode) {
       player.classList.add('letterbox-mode');
       if (isElectron) window.viewfinder.clearAspectRatio();
+      applyLetterboxSize();
     } else {
       player.classList.remove('letterbox-mode');
+      video.style.width = '';
+      video.style.height = '';
       // Restore aspect lock from current video, if any is loaded
       if (isElectron && video.videoWidth && video.videoHeight) {
         const WIN_TITLEBAR_H = 32;
@@ -187,6 +214,12 @@
     }
     showToast('Letterbox Mode: ' + (letterboxMode ? 'On' : 'Off'));
   }
+
+  // Re-fit the video on window resize while in letterbox mode so it tracks
+  // the container shrinking. It will never grow above intrinsic pixels.
+  window.addEventListener('resize', () => {
+    if (letterboxMode) applyLetterboxSize();
+  });
 
   // Apply saved letterbox state at startup (after player element is available).
   if (letterboxMode) {
@@ -213,10 +246,10 @@
       updateInfoPanel();
       detectFPS();
       loadCommentsFromFile();
-      // Publish intrinsic pixel dimensions for the letterbox-mode CSS cap.
-      if (video.videoWidth && video.videoHeight) {
-        player.style.setProperty('--vf-video-w', video.videoWidth + 'px');
-        player.style.setProperty('--vf-video-h', video.videoHeight + 'px');
+      // If in letterbox mode, size the video to its intrinsic pixels (capped
+      // at container). Defer a frame so layout has settled.
+      if (letterboxMode) {
+        requestAnimationFrame(() => applyLetterboxSize());
       }
       if (isElectron && video.videoWidth && video.videoHeight && !letterboxMode) {
         // Letterbox mode keeps the window free-form and the video at its
