@@ -47,8 +47,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 750,
-    minWidth: 640,
-    minHeight: 400,
+    minWidth: 320,
+    minHeight: 200,
     backgroundColor: '#111',
     frame: false,
     webPreferences: {
@@ -105,8 +105,8 @@ function createWindow() {
         }
       }
 
-      targetW = Math.max(targetW, 400);
-      targetH = Math.max(targetH, 300);
+      targetW = Math.max(targetW, 320);
+      targetH = Math.max(targetH, 200);
 
       if (targetW === w && targetH === h) return;
       event.preventDefault();

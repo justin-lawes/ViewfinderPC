@@ -168,18 +168,36 @@
   let letterboxMode = false;
   try { letterboxMode = localStorage.getItem('vf_letterbox') === 'true'; } catch {}
 
-  // Pin the video to its intrinsic pixel dimensions so it never tracks the
-  // window size — pull the window larger and the video stays put, surrounded
-  // by black. If the window is smaller than the video, the container's
-  // overflow:hidden will crop the edges (resize the window to see it all).
+  // Locked-in pixel size for letterbox mode. Chosen on enable / new video
+  // load (fit-to-window, never upscaled), then held steady through window
+  // resizes so the video doesn't track the window.
+  let lbFixedW = 0, lbFixedH = 0;
+
+  // (re)compute the locked letterbox size to fit the current container,
+  // capped at intrinsic so we never scale above native.
+  function recalcLetterboxSize() {
+    if (!video.videoWidth || !video.videoHeight) { lbFixedW = lbFixedH = 0; return; }
+    const vc = document.getElementById('video-container');
+    if (!vc) return;
+    const rect = vc.getBoundingClientRect();
+    // Subtract 2px for the 1px border on each side (box-sizing: content-box).
+    const availW = Math.max(1, rect.width - 2);
+    const availH = Math.max(1, rect.height - 2);
+    const scale = Math.min(1, availW / video.videoWidth, availH / video.videoHeight);
+    lbFixedW = Math.floor(video.videoWidth * scale);
+    lbFixedH = Math.floor(video.videoHeight * scale);
+  }
+
+  // Apply the locked letterbox size. Does NOT recompute — so window resizes
+  // leave the video at its chosen size (surrounded by more/less black).
   function applyLetterboxSize() {
-    if (!letterboxMode || !video.videoWidth || !video.videoHeight) {
+    if (!letterboxMode || !lbFixedW || !lbFixedH) {
       video.style.width = '';
       video.style.height = '';
       return;
     }
-    video.style.width = video.videoWidth + 'px';
-    video.style.height = video.videoHeight + 'px';
+    video.style.width = lbFixedW + 'px';
+    video.style.height = lbFixedH + 'px';
   }
 
   function applyLetterboxMode(enabled) {
@@ -188,6 +206,8 @@
     if (letterboxMode) {
       player.classList.add('letterbox-mode');
       if (isElectron) window.viewfinder.clearAspectRatio();
+      // Fit the video to the current window the first time we enter letterbox.
+      recalcLetterboxSize();
       applyLetterboxSize();
     } else {
       player.classList.remove('letterbox-mode');
@@ -236,10 +256,16 @@
       updateInfoPanel();
       detectFPS();
       loadCommentsFromFile();
-      // If in letterbox mode, size the video to its intrinsic pixels (capped
-      // at container). Defer a frame so layout has settled.
+      // If in letterbox mode, fit the new video to the current window and
+      // lock that size in. Defer a frame so layout has settled.
       if (letterboxMode) {
-        requestAnimationFrame(() => applyLetterboxSize());
+        requestAnimationFrame(() => {
+          recalcLetterboxSize();
+          applyLetterboxSize();
+          // Reset any pan from the previous video.
+          lbPanX = 0; lbPanY = 0;
+          if (typeof applyZoom === 'function') applyZoom();
+        });
       }
       if (isElectron && video.videoWidth && video.videoHeight && !letterboxMode) {
         // Letterbox mode keeps the window free-form and the video at its
