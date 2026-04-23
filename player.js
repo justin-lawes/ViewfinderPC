@@ -1915,7 +1915,9 @@
     const bar = document.querySelector('.control-bar');
     if (bar) bar.style.marginLeft = panelWidth;
     if (isElectron) window.viewfinder.clearAspectRatio();
-    if (!playlistPanelOpen && isElectron && video.videoWidth && video.videoHeight) {
+    // Skip re-locking the aspect ratio in letterbox mode — the window is
+    // meant to be freely resizable there.
+    if (!playlistPanelOpen && isElectron && !letterboxMode && video.videoWidth && video.videoHeight) {
       const chromeH = (timelineContainer ? timelineContainer.offsetHeight : 0) +
                       (document.querySelector('.control-bar') ? document.querySelector('.control-bar').offsetHeight : 40);
       window.viewfinder.setAspectRatio(video.videoWidth / video.videoHeight, chromeH);
@@ -1984,7 +1986,9 @@
     const bar = document.querySelector('.control-bar');
     if (bar) bar.style.marginRight = panelWidth;
     if (isElectron) window.viewfinder.clearAspectRatio();
-    if (!commentsPanelOpen && isElectron && video.videoWidth && video.videoHeight) {
+    // Skip re-locking the aspect ratio in letterbox mode — the window is
+    // meant to be freely resizable there.
+    if (!commentsPanelOpen && isElectron && !letterboxMode && video.videoWidth && video.videoHeight) {
       const chromeH = (timelineContainer ? timelineContainer.offsetHeight : 0) +
                       (document.querySelector('.control-bar') ? document.querySelector('.control-bar').offsetHeight : 40);
       window.viewfinder.setAspectRatio(video.videoWidth / video.videoHeight, chromeH);
