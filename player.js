@@ -1023,12 +1023,16 @@
   }
 
   function clampLetterboxPan() {
-    // Allow panning only as far as needed to expose clipped edges.
+    // Allow pan in both directions regardless of whether the video is bigger
+    // or smaller than the container. Limit is |video - container| / 2 so the
+    // video can slide until one edge touches a container edge (both for
+    // revealing overflow when video > container, and for sliding around the
+    // black area when video < container).
     const cRect = videoContainer.getBoundingClientRect();
-    const overflowX = Math.max(0, video.offsetWidth - cRect.width) / 2;
-    const overflowY = Math.max(0, video.offsetHeight - cRect.height) / 2;
-    lbPanX = Math.max(-overflowX, Math.min(overflowX, lbPanX));
-    lbPanY = Math.max(-overflowY, Math.min(overflowY, lbPanY));
+    const dx = Math.abs(video.offsetWidth - cRect.width) / 2;
+    const dy = Math.abs(video.offsetHeight - cRect.height) / 2;
+    lbPanX = Math.max(-dx, Math.min(dx, lbPanX));
+    lbPanY = Math.max(-dy, Math.min(dy, lbPanY));
   }
 
   videoContainer.addEventListener('wheel', (e) => {
@@ -1041,21 +1045,26 @@
     applyZoom();
   }, { passive: false });
 
+  // Middle-mouse pan handled in capture phase on document so it wins over any
+  // child handler (annotation, color picker, etc.) that might call stopPropagation.
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 1) return;
+    if (colorPickerActive) return;
+    // Only pan when the press originates inside the video area.
+    if (!videoContainer.contains(e.target) && e.target !== videoContainer) return;
+    isPanning = true;
+    panMode = 'letterbox';
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panStartPanX = lbPanX;
+    panStartPanY = lbPanY;
+    videoContainer.style.cursor = 'grabbing';
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+
   videoContainer.addEventListener('mousedown', (e) => {
     if (colorPickerActive) return;
-    // Middle-mouse pans the whole video (letterbox pan) regardless of zoom.
-    if (e.button === 1) {
-      isPanning = true;
-      panMode = 'letterbox';
-      panStartX = e.clientX;
-      panStartY = e.clientY;
-      panStartPanX = lbPanX;
-      panStartPanY = lbPanY;
-      videoContainer.style.cursor = 'grabbing';
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
     // Left-mouse pans the zoomed view (only when zoomed in).
     if (!isZoomed || e.button !== 0) return;
     isPanning = true;
@@ -1069,10 +1078,13 @@
     e.stopPropagation();
   });
 
-  // Prevent middle-click autoscroll (the weird scroll-cursor) from kicking in.
-  videoContainer.addEventListener('auxclick', (e) => {
+  // Suppress the default Windows middle-click autoscroll (scroll cursor).
+  document.addEventListener('auxclick', (e) => {
     if (e.button === 1) e.preventDefault();
   });
+  document.addEventListener('mouseup', (e) => {
+    if (e.button === 1) e.preventDefault();
+  }, true);
 
   document.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
