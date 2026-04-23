@@ -168,28 +168,18 @@
   let letterboxMode = false;
   try { letterboxMode = localStorage.getItem('vf_letterbox') === 'true'; } catch {}
 
-  // Compute inline width/height so the video fits the container but never
-  // scales above its intrinsic pixel dimensions.
+  // Pin the video to its intrinsic pixel dimensions so it never tracks the
+  // window size — pull the window larger and the video stays put, surrounded
+  // by black. If the window is smaller than the video, the container's
+  // overflow:hidden will crop the edges (resize the window to see it all).
   function applyLetterboxSize() {
     if (!letterboxMode || !video.videoWidth || !video.videoHeight) {
       video.style.width = '';
       video.style.height = '';
       return;
     }
-    const vc = document.getElementById('video-container');
-    if (!vc) return;
-    const rect = vc.getBoundingClientRect();
-    // Subtract 2px for the 1px border on each side (box-sizing: content-box).
-    const availW = Math.max(0, rect.width - 2);
-    const availH = Math.max(0, rect.height - 2);
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    // Scale = 1 keeps intrinsic; shrink proportionally if container is smaller.
-    const scale = Math.min(1, availW / vw, availH / vh);
-    const w = Math.floor(vw * scale);
-    const h = Math.floor(vh * scale);
-    video.style.width = w + 'px';
-    video.style.height = h + 'px';
+    video.style.width = video.videoWidth + 'px';
+    video.style.height = video.videoHeight + 'px';
   }
 
   function applyLetterboxMode(enabled) {
@@ -203,6 +193,12 @@
       player.classList.remove('letterbox-mode');
       video.style.width = '';
       video.style.height = '';
+      // Reset any letterbox-mode pan offset so the default (non-letterbox)
+      // layout isn't shifted.
+      if (typeof lbPanX !== 'undefined') {
+        lbPanX = 0; lbPanY = 0;
+        if (typeof applyZoom === 'function') applyZoom();
+      }
       // Restore aspect lock from current video, if any is loaded
       if (isElectron && video.videoWidth && video.videoHeight) {
         const WIN_TITLEBAR_H = 32;
@@ -214,12 +210,6 @@
     }
     showToast('Letterbox Mode: ' + (letterboxMode ? 'On' : 'Off'));
   }
-
-  // Re-fit the video on window resize while in letterbox mode so it tracks
-  // the container shrinking. It will never grow above intrinsic pixels.
-  window.addEventListener('resize', () => {
-    if (letterboxMode) applyLetterboxSize();
-  });
 
   // Apply saved letterbox state at startup (after player element is available).
   if (letterboxMode) {
@@ -975,15 +965,19 @@
 
   // --- Zoom (scroll wheel zoom + drag to pan) ---
   let zoomScale = 1;
-  let panX = 0, panY = 0;
+  let panX = 0, panY = 0;         // zoom pan (inside the scale() transform)
+  let lbPanX = 0, lbPanY = 0;     // letterbox pan (shifts whole video within window)
   let isPanning = false;
+  let panMode = 'zoom';            // 'zoom' | 'letterbox'
   let panStartX = 0, panStartY = 0;
   let panStartPanX = 0, panStartPanY = 0;
   const videoContainer = $('#video-container');
 
   function applyZoom() {
     isZoomed = zoomScale > 1;
-    const transform = `scale(${zoomScale}) translate(${panX}px, ${panY}px)`;
+    // Outer translate shifts the whole video (letterbox pan); inner scale+translate
+    // handles zoom. Order: translate first so it isn't scaled by the zoom.
+    const transform = `translate(${lbPanX}px, ${lbPanY}px) scale(${zoomScale}) translate(${panX}px, ${panY}px)`;
     video.style.transform = transform;
     video.style.transformOrigin = 'center center';
     // Keep annotation canvas in sync with video zoom
@@ -1002,6 +996,15 @@
     panY = Math.max(-maxPanY, Math.min(maxPanY, panY));
   }
 
+  function clampLetterboxPan() {
+    // Allow panning only as far as needed to expose clipped edges.
+    const cRect = videoContainer.getBoundingClientRect();
+    const overflowX = Math.max(0, video.offsetWidth - cRect.width) / 2;
+    const overflowY = Math.max(0, video.offsetHeight - cRect.height) / 2;
+    lbPanX = Math.max(-overflowX, Math.min(overflowX, lbPanX));
+    lbPanY = Math.max(-overflowY, Math.min(overflowY, lbPanY));
+  }
+
   videoContainer.addEventListener('wheel', (e) => {
     if (colorPickerActive) return;
     e.preventDefault();
@@ -1013,8 +1016,24 @@
   }, { passive: false });
 
   videoContainer.addEventListener('mousedown', (e) => {
-    if (colorPickerActive || !isZoomed || e.button !== 0) return;
+    if (colorPickerActive) return;
+    // Middle-mouse pans the whole video (letterbox pan) regardless of zoom.
+    if (e.button === 1) {
+      isPanning = true;
+      panMode = 'letterbox';
+      panStartX = e.clientX;
+      panStartY = e.clientY;
+      panStartPanX = lbPanX;
+      panStartPanY = lbPanY;
+      videoContainer.style.cursor = 'grabbing';
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // Left-mouse pans the zoomed view (only when zoomed in).
+    if (!isZoomed || e.button !== 0) return;
     isPanning = true;
+    panMode = 'zoom';
     panStartX = e.clientX;
     panStartY = e.clientY;
     panStartPanX = panX;
@@ -1024,18 +1043,29 @@
     e.stopPropagation();
   });
 
+  // Prevent middle-click autoscroll (the weird scroll-cursor) from kicking in.
+  videoContainer.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+
   document.addEventListener('mousemove', (e) => {
     if (!isPanning) return;
-    const dx = (e.clientX - panStartX) / zoomScale;
-    const dy = (e.clientY - panStartY) / zoomScale;
-    panX = panStartPanX + dx;
-    panY = panStartPanY + dy;
-    clampPan();
+    if (panMode === 'letterbox') {
+      lbPanX = panStartPanX + (e.clientX - panStartX);
+      lbPanY = panStartPanY + (e.clientY - panStartY);
+      clampLetterboxPan();
+    } else {
+      const dx = (e.clientX - panStartX) / zoomScale;
+      const dy = (e.clientY - panStartY) / zoomScale;
+      panX = panStartPanX + dx;
+      panY = panStartPanY + dy;
+      clampPan();
+    }
     applyZoom();
   });
 
-  document.addEventListener('mouseup', () => {
-    if (isPanning) {
+  document.addEventListener('mouseup', (e) => {
+    if (isPanning && (e.button === 0 || e.button === 1)) {
       isPanning = false;
       videoContainer.style.cursor = '';
     }
