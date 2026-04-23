@@ -236,7 +236,13 @@
 
   document.addEventListener('dragenter', (e) => {
     e.preventDefault();
-    if (isInsidePlaylistPanel(e.target)) return;
+    if (isInsidePlaylistPanel(e.target)) {
+      // Drag entered the playlist panel — hide the main drop overlay so it
+      // doesn't sit on top of the panel and steal the drop event.
+      dropOverlay.classList.add('hidden');
+      dragCounter = 0;
+      return;
+    }
     dragCounter++;
     if (dragCounter === 1) dropOverlay.classList.remove('hidden');
   });

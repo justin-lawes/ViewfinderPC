@@ -957,7 +957,7 @@ button:focus:not(:focus-visible) {
   background: rgba(17, 17, 17, 0.95);
   backdrop-filter: blur(12px);
   border-right: 1px solid var(--border);
-  z-index: 10;
+  z-index: 1001; /* above drop-overlay (1000) so drags land here correctly */
   display: flex;
   flex-direction: column;
   overflow: hidden;
