@@ -128,8 +128,15 @@
   }
 
   function loadFile(file) {
-    // In Electron, dragged/picked files expose file.path — use it so sidecars work
-    const filePath = (isElectron && file.path) ? file.path : null;
+    // In Electron, dragged/picked files expose file.path — use it so sidecars work.
+    // Electron 32+ removed File.path from the renderer; fall back to webUtils.getPathForFile.
+    let filePath = null;
+    if (isElectron) {
+      if (file.path) filePath = file.path;
+      else if (window.viewfinder && window.viewfinder.getPathForFile) {
+        filePath = window.viewfinder.getPathForFile(file) || null;
+      }
+    }
     currentFile = { name: file.name, size: file.size, type: file.type, path: filePath };
     const url = URL.createObjectURL(file);
     setVideoSource(url);
@@ -1934,25 +1941,36 @@
   if (playlistBtn) playlistBtn.addEventListener('click', togglePlaylistPanel);
   if (playlistClose) playlistClose.addEventListener('click', togglePlaylistPanel);
 
-  // Drag-drop onto the playlist drop zone
-  if (playlistDropZone) {
-    playlistDropZone.addEventListener('dragover', (e) => {
+  // Drag-drop: accept drops anywhere on the playlist panel (not just the
+  // tiny "drop zone" box at the bottom), and highlight the drop-zone visually.
+  const playlistDropTarget = playlistPanel || playlistDropZone;
+  if (playlistDropTarget) {
+    playlistDropTarget.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      playlistDropZone.classList.add('drag-over');
+      if (playlistDropZone) playlistDropZone.classList.add('drag-over');
     });
-    playlistDropZone.addEventListener('dragleave', () => {
-      playlistDropZone.classList.remove('drag-over');
+    playlistDropTarget.addEventListener('dragleave', (e) => {
+      // Only clear when leaving the panel itself, not when moving between
+      // children (which fires dragleave on the child).
+      if (e.relatedTarget && playlistDropTarget.contains(e.relatedTarget)) return;
+      if (playlistDropZone) playlistDropZone.classList.remove('drag-over');
     });
-    playlistDropZone.addEventListener('drop', (e) => {
+    playlistDropTarget.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      playlistDropZone.classList.remove('drag-over');
+      if (playlistDropZone) playlistDropZone.classList.remove('drag-over');
       const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm|m4v|ogv|wmv|flv|mts|m2ts)$/i.test(f.name));
       if (files.length === 0) return;
       const wasEmpty = playlistItems.length === 0;
       files.forEach((f, i) => {
-        const path = isElectron && f.path ? f.path : null;
+        let path = null;
+        if (isElectron) {
+          if (f.path) path = f.path;
+          else if (window.viewfinder && window.viewfinder.getPathForFile) {
+            path = window.viewfinder.getPathForFile(f) || null;
+          }
+        }
         if (!path) return;
         addToPlaylist(f.name, path, wasEmpty && i === 0);
       });

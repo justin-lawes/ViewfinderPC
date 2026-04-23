@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('viewfinder', {
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('viewfinder', {
   setAspectRatio: (ratio, extraH) => ipcRenderer.invoke('set-aspect-ratio', ratio, extraH),
   clearAspectRatio: () => ipcRenderer.invoke('clear-aspect-ratio'),
   syncLetterboxMenu: (enabled) => ipcRenderer.invoke('sync-letterbox-menu', enabled),
+  // Electron 32+ removed File.path from drag-dropped files — renderer must
+  // call webUtils.getPathForFile(file) instead. Expose it here.
+  getPathForFile: (file) => {
+    try { return webUtils.getPathForFile(file); } catch { return ''; }
+  },
   isElectron: true,
   platform: process.platform,
 });
