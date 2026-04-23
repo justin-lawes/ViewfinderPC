@@ -47,8 +47,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 750,
-    minWidth: 200,
-    minHeight: 140,
+    minWidth: 100,
+    minHeight: 100,
     backgroundColor: '#111',
     frame: false,
     webPreferences: {
@@ -63,7 +63,7 @@ function createWindow() {
 
   // Belt-and-suspenders — Windows sometimes ignores the constructor's
   // minWidth/minHeight for frameless windows. Set it explicitly too.
-  mainWindow.setMinimumSize(200, 140);
+  mainWindow.setMinimumSize(100, 100);
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -109,8 +109,8 @@ function createWindow() {
         }
       }
 
-      targetW = Math.max(targetW, 200);
-      targetH = Math.max(targetH, 140);
+      targetW = Math.max(targetW, 100);
+      targetH = Math.max(targetH, 100);
 
       if (targetW === w && targetH === h) return;
       event.preventDefault();
